@@ -1,0 +1,200 @@
+---
+title: "Time Series Analysis: China's Trade Balance"
+output:
+  pdf_document: default
+  html_document: default
+date: '2022-10-10'
+---
+
+The focus here is an investigation of trends in China's trade balance (measured as a percentage share of its GDP). It would be interesting to see how this fluctuates over time given its dramatic transformation from its early Maoist days to its current status as the "factory of the world." I will be using data from the Penn World Tables (PWT), which compiles cost-of-living adjusted GDP data from various countries.
+
+```{r}
+suppressPackageStartupMessages(suppressWarnings(library(tidyverse)))
+suppressPackageStartupMessages(suppressWarnings(library(broom)))
+suppressPackageStartupMessages(suppressWarnings(library(ggplot2)))
+suppressPackageStartupMessages(suppressWarnings(library(lmtest)))
+suppressPackageStartupMessages(suppressWarnings(library(tinytex)))
+suppressPackageStartupMessages(suppressWarnings(library(rms)))
+suppressPackageStartupMessages(suppressWarnings(library(forecast)))
+suppressPackageStartupMessages(suppressWarnings(library(stargazer)))
+```
+
+<br/>  
+
+#### **Preliminary data cleaning**
+
+Since the PWT only has data for the export and import share of GDP, I will calculate the trade balance share first (which is really just exports subtracted by imports). Additionally, I should also specify that the data is originally in percentage-decimal format (eg. 0.01 really means 1%). I will multiply all these values by 100 just to make these numbers slightly easier to interpret. Import values were also originally coded in negative values (since in calculating GDP, their effect is negative). I converted import values to positive values so they can be more easily compared to exports in the subgroup analysis section below.
+
+```{r}
+china_trade <- read.csv("china_trade_gdp.csv") %>% 
+  mutate(export = export*100,
+         import = -import*100,
+         trade_gdpshare = export - import)
+```
+
+<br/>
+
+#### **General trend analysis**
+
+As the chart below shows, on a very general level China's trade balance as a portion of its GDP appears to have increased over time, something that seems to line up with the broader historical story of China's transformation into a manufacturing powerhouse. On a more detailed level however, the chart also suggests strong periodic variation in this effect. The trade balance for instance, appears to be much more static prior to the 1980s before picking up significantly. Fast forward to the 2010s, and we even begin to see a reversal in this trend of a rising trade balance.
+```{r}
+ggplot(data = china_trade, aes(x = year, y = trade_gdpshare, group = 1)) +
+  geom_line()
+```
+
+To provide a more quantitative picture of this general observation, I tried to run a standard linear regression with time as the main regressor.
+
+```{r}
+china_trade_lm <- lm(trade_gdpshare ~ year, china_trade)
+summary(china_trade_lm)
+```
+
+And indeed, the model's results line up with what we see in the previous chart, showing that China's trade balance as a share of GDP rises, on average, by 0.05 percentage points every year (the results are also statistically significant, with a p-value below 0.001. The adjusted R-square (at 0.5341) appears to be quite high as well, suggesting that 53.4% of the variation we see in the trade balance can be explained by the passing of time. Again, this is something that makes sense when we think of the fact that China was experiencing rapid economic development in at least half of the time period measured in the data.
+
+```{r}
+ggplot(china_trade, aes(x = year, y = trade_gdpshare)) +
+  geom_line() +
+  stat_smooth(method = "lm", se = F, color = "red", lty = 2)
+```
+
+Plotting these regression results on the graph above shows a decent fit. However, our linear regression doesn't seem to capture some of the wilder swings in the trade balance, particularly in the 1990s and 2000s. Perhaps a polynomial regression might prove to be a better fit for these patterns. Indeed, the RESET test below appears to be statistically significant, which suggests that a purely linear model may not be sufficient for our data.
+
+```{r}
+resettest(china_trade_lm)
+```
+
+Following up on this, I attempted to run several polynomial regressions. The results are interesting:
+
+```{r}
+china_trade_pm2 <- lm(trade_gdpshare ~ poly(year, 2), china_trade)
+summary(china_trade_pm2)
+china_trade_pm3 <- lm(trade_gdpshare ~ poly(year, 3), china_trade)
+summary(china_trade_pm3)
+china_trade_pm4 <- lm(trade_gdpshare ~ poly(year, 4), china_trade)
+summary(china_trade_pm4)
+china_trade_pm5 <- lm(trade_gdpshare ~ poly(year, 5), china_trade)
+summary(china_trade_pm5)
+china_trade_pm6 <- lm(trade_gdpshare ~ poly(year, 6), china_trade)
+summary(china_trade_pm6)
+```
+
+At first glance, adding a polynomial degree to the regression generally increases the adjusted R-squared value. However, there is a point above which adding polynomial degrees appears to be superfluous. For instance, one can observe that above a polynomial degree of four, adding more polynomial degrees seems to only have a minimal effect on the adjusted R-squared. To illustrate, here is a summarized list of the adjusted R-squared values observed for each polynomial degree:
+
+  1. Polynomial degree of 1: 0.5341
+  2. Polynomial degree of 2: 0.6088
+  3. Polynomial degree of 3: 0.6360
+  4. Polynomial degree of 4: 0.7709
+  5. Polynomial degree of 5: 0.7780
+  6. Polynomial degree of 6: 0.7770
+  
+Additionally, with each additional polynomial degree added above 4, the statistical significance of each new polynomial degree added appears to decrease, again suggesting this superfluity. What the above suggests is that there appears to be four distinct "relationships" between China's trade balance and time, perhaps implying some form of periodicity (and as we will see, from an economic history perspective, we can divide China's economic development in this period into four distinct stages). Before moving on to period analysis however, I tried plotting the four-degree polynomial model below, which shows a relatively good fit between the model and the data (beyond the massive spike in the 2000s).
+
+```{r}
+ggplot(china_trade, aes(x = year, y = trade_gdpshare)) +
+  geom_line() +
+  stat_smooth(method = "lm", formula = y ~ poly(x, 4), se = F, color = "red", lty = 2)
+```
+
+<br/>
+
+#### **Period Analysis**
+
+China's economic development in the period covered by the data can be divided into four distinct time periods:
+
+  1. 1952-1978: The Mao era, characterized by economic collectivization and large-scale social turmoil
+  2. 1979-2001: The first phase of China's economic reform period, kicked off by Deng Xiaoping's "Reform and Opening Up"
+  3. 2002-2007: China joins the WTO, accelerating its integration into the global economy
+  4. 2008-2019: The boom of the 2000s gives way to a global economic malaise after the 2008 Global Financial Crisis (GFC)
+  
+I begin by creating several dummy variables marking these four distinct periods, with the base variable representing the Mao era:
+
+```{r}
+china_trade_period <- china_trade %>% 
+  mutate(deng = ifelse(year > 1978 & year < 2002, 1, 0),
+         wto = ifelse(year > 2001 & year < 2008, 1, 0),
+         gfc = ifelse(year > 2007, 1, 0))
+```
+
+We can now run a regression on these dummy variables, as well as its corresponding plot:
+
+```{r}
+china_trade_period_lm <- lm(trade_gdpshare ~ deng + wto + gfc, china_trade_period)
+summary(china_trade_period_lm)
+```
+
+```{r}
+cn_tp_lm_tidy <- tidy(china_trade_period_lm)
+
+ggplot(china_trade, aes(x = year, y = trade_gdpshare)) +
+  geom_line() +
+  geom_segment(aes(y = cn_tp_lm_tidy$estimate[1], 
+                   yend = cn_tp_lm_tidy$estimate[1], 
+                   x = 1952, xend = 1978), 
+               col = "red", lty = 2, size = 1) +
+  geom_segment(aes(y = cn_tp_lm_tidy$estimate[1] + cn_tp_lm_tidy$estimate[2], 
+                   yend = cn_tp_lm_tidy$estimate[1] + cn_tp_lm_tidy$estimate[2], 
+                   x = 1978, xend = 2001), 
+               col = "red", lty = 2, size = 1) +
+  geom_segment(aes(y = cn_tp_lm_tidy$estimate[1] + cn_tp_lm_tidy$estimate[3], 
+                   yend = cn_tp_lm_tidy$estimate[1] + cn_tp_lm_tidy$estimate[3], 
+                   x = 2001, xend = 2007), 
+               col = "red", lty = 2, size = 1) +
+  geom_segment(aes(y = cn_tp_lm_tidy$estimate[1] + cn_tp_lm_tidy$estimate[4], 
+                   yend = cn_tp_lm_tidy$estimate[1] + cn_tp_lm_tidy$estimate[4], 
+                   x = 2007, xend = 2019), 
+               col = "red", lty = 2, size = 1)
+```
+
+As we can see from the above, each period seems to mark out a distinct pattern in China's trade balance. During the Mao era, China's average trade balance appears to be hovering around a 0.30% average, the lowest in the period surveyed. This was not a very economically dynamic time for China, wracked as it was by political and economic upheavals such as the Great Leap Forward and the Cultural Revolution. China's economic growth began to pick up after 1978, with the onset of Deng Xiaoping's economic reforms. Correspondingly, China's average trade balance increased by 0.51 percentage points during this period, presumably as growing economic strength allowed it to clinch a greater portion of world trade. The trade balance soared dramatically in the 2000s, as joining the WTO catalyzed China's integration with the world economy. This is reflected above, with China's average trade balance hovering around 3.64% in this period. Finally, the Global Financial Crisis in 2008 caused a severe recession in the US and Europe - China's primary export markets in its post-WTO years - causing China's trade balance to shrink as export growth began to decelerate. Again, this is reflected above as the average trade balance drops by 0.62 percentage points between the WTO and post-GFC period. The model's adjusted R-squared of 0.6799 however, is still lower than the value observed for the four degree polynomial model created above. This may be because this model doesn't take into account the fact that the relationship between China's trade balance and time appears to change in each period. It might be interesting then, to create a model where this is dynamic instead of using static dummies for each period. To this end, I attempted to create a model using splines with time periods corresponding to the four eras selected previously:
+
+```{r}
+cn_tp_spl <- lm(trade_gdpshare ~ lsp(year, c(1978, 2001, 2007)), china_trade)
+summary(cn_tp_spl)
+```
+
+As expected, we see a positive slope in the Deng Xiaoping and WTO eras, with the WTO slope having the steepest positive gradient. Additionally, we see that the slope for the final, post-GFC phase is negative, reflecting how China's trade balance began to decline from its WTO peak as export demand from the recession-stricken West continued to slump. This model has an adjusted R-squared value of 0.8351, our best fit so far. It is also interesting to note that the slope for the Mao period appears to not be statistically significant. This may be due to how China's trade balance appears to be flat on average in this period, suggesting no significant correlation between it and time in this period. These results are visualized as well in the plot provided below: 
+
+```{r}
+cn_tp_spl_forecast <- predict.lm(object = cn_tp_spl, newdata = china_trade)
+
+ggplot(china_trade, aes(x = year, y = trade_gdpshare)) + 
+  geom_line() + 
+  geom_line(aes(y = cn_tp_spl_forecast), col = "red", lty = 2, size = 1)
+```
+
+<br/>
+
+#### **Subgroup Analysis**
+
+While there are no demographic-style subgroups in this dataset, we can decompose China's trade balance into its export and import components, and see how each is driving the changes we are seeing in China's trade balance. Below is a plot of the two variables:
+
+```{r}
+ggplot(china_trade, aes(x = year)) + 
+  geom_line(aes(y = export, color = "export")) + 
+  geom_line(aes(y = import, color = "import")) +
+  labs(y = "% of GDP")
+```
+
+A very rough analysis of the chart above shows that while both Chinese exports and imports grew over time, exports appeared to grow at a faster pace after the 1990s. For a more precise accounting of this, I replicated the period-based spline regressions for exports and imports below, and plotted the results as well:
+
+```{r}
+cn_exp_spl <- lm(export ~ lsp(year, c(1978, 2001, 2007)), china_trade)
+cn_imp_spl <- lm(import ~ lsp(year, c(1978, 2001, 2007)), china_trade)
+suppressWarnings(stargazer(cn_exp_spl, cn_imp_spl, type = "text", omit.stat = c("rsq", "f")))
+```
+
+
+```{r}
+cn_exp_spl_forecast <- predict.lm(object = cn_exp_spl, newdata = china_trade)
+cn_imp_spl_forecast <- predict.lm(object = cn_imp_spl, newdata = china_trade)
+
+ggplot(china_trade, aes(x = year)) + 
+  geom_line(aes(y = export, color = "export"), size = 1) + 
+  geom_line(aes(y = cn_exp_spl_forecast), col = "black", lty = 2, size = 0.8) +
+  geom_line(aes(y = import, color = "import"), size = 1) +
+  geom_line(aes(y = cn_imp_spl_forecast), col = "purple", lty = 2, size = 0.8) +
+  labs(y = "% of GDP")
+```
+
+Like the broader trade balance, the coefficients for exports and imports in the Mao era are not statistical significance, something which is again reflected in how both exports and imports seem to be relatively stagnant in this period. In both the Deng and WTO periods however, although the coefficients for both exports and imports increased from previous periods, we see that the coefficients for exports tend to be higher than imports. This tells us that while both exports and imports increased during this period where China's economy was expanding and gradually integrating with the global economy, the increase in the trade balance was driven by how exports tended to grow at a faster pace than imports. A new trend emerges during the post-GFC era, with exports remaining largely constant while imports continue to increase. Indeed the coefficients above suggest that the negative effects of the GFC were greater for exports compared to imports. This was in line with the economic situation of the time. While exports stagnated as China's export markets went through a severe recession, imports continued to grow as China's economy, less scarred by the economic carnage in the West, continued to expand (helped along by generous spending by the Chinese government).
+

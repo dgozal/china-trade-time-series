@@ -38,5 +38,5 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# My files
+# Files to exclude
 china-trade-time-series.Rproj
