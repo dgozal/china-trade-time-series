@@ -3,6 +3,5 @@ How has China's trade balance evolved in the years 1952 - 2019? This is a period
 
 The contents here are a slightly modified version of previous coursework I did in college.
 
-
 ## Instructions
 You will only need the R Markdown and csv files attached to re-run my analysis. Detailed explanations are provided in the R Markdown file attached.
